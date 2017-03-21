@@ -12,6 +12,8 @@
 #include <string>
 #include <iostream>
 #include <sys/epoll.h>
+#include "log.h"
+using namespace Seamless;
 #define MAX_QUEUE_SIZE 1024 * 1024 * 64
 #define MAX_EPOLL_EVENT 128
 struct transform_queue_t
@@ -99,7 +101,6 @@ int main()
         PROT_READ|PROT_WRITE, MAP_SHARED|MAP_ANON, 0, 0);
     p_2_c_queue->init();
     c_2_p_queue->init();
-
     pipe2(pipefd, O_NONBLOCK);
 
     int pid = fork();
@@ -141,6 +142,8 @@ int get_server_socket(const std::string& addr, int port)
 
 void parent()
 {
+    LogUtils::init();
+    log("test if log is ok:%s", "parent");
     void* pipe_discard_buffer = malloc(1024);
     void* read_buffer = malloc(MAX_QUEUE_SIZE * 2);
     void* write_buffer = malloc(MAX_QUEUE_SIZE * 2);
@@ -230,6 +233,8 @@ void parent()
 // unsigned char read_buffer_queue[MAX_QUEUE_SIZE];
 void child()
 {
+    LogUtils::init();
+    log("test if log is ok,%s", "child");
     void *read_buffer = malloc(MAX_QUEUE_SIZE * 2);
     void *write_buffer = malloc(MAX_QUEUE_SIZE * 2);
     memset(read_buffer, 0, MAX_QUEUE_SIZE);
