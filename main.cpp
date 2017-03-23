@@ -77,7 +77,6 @@ struct transform_cmd_t
     uint32_t cmd_size = 0;
 };
 
-
 //TODO(dmy) 不应该使用sock-fd，使用自己生成的唯一标志id
 struct transform_cmd_socket_data_t : transform_cmd_t
 {
