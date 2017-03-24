@@ -5,7 +5,9 @@ namespace Seamless
 enum TRANSFORM_CMD_TYPE
 {
     TRANSFORM_CMD_SOCKET = 1,
-    TRANSFORM_CMD_MAX = 127,//第一位用来表示是否为拼接协议
+    TRANSFORM_CMD_JOINT = 2,
+    TRANSFORM_CMD_JOINT_END = 3,
+    TRANSFORM_CMD_MAX = 255,//第一位用来表示是否为拼接协议
 }
 
 struct transform_cmd_t
@@ -20,6 +22,13 @@ struct transform_cmd_socket_data_t : transform_cmd_t
     int sock_fd;
     uint32_t data_len;
     unsigned char* data[0];
+};
+
+struct transform_cmd_joint_t : transform_cmd_t
+{
+    unsigned char* data[0];
+    static void split(const transform_cmd_t* cmd, std::list<transform_cmd_joint_t*>& cmd_list, size_t max_buffer_size);
+    static void joint(transform_cmd_t* cmd, std::list<transform_cmd_joint_t*>& cmd_list);
 };
 
 class RingBuffer
@@ -44,7 +53,7 @@ class CmdQueue
 {
 public:
     CmdQueue(uint32_t buffer_size);
-    void init(bool is_child_process, std::function<void(transform_cmd_t*)> process_cmd_func);
+    void init(bool is_child_process, std::function<void(const transform_cmd_t*)> process_cmd_func);
     // void set_process_func()
     // void init();
     // void final();
@@ -56,9 +65,9 @@ private:
     size_t _buffer_size;
 private:
     RingBuffer* _read_queue;
-    std::function<void(transform_cmd_t*)> _process_cmd_func;
+    std::function<void(const transform_cmd_t*)> _process_cmd_func;
     void* _read_buffer;
-    std::list<transform_cmd_t*> _read_cmd;
+    std::list<transform_cmd_joint_t*> _read_cmd;
 private:
     std::list<transform_cmd_t*> _send_cmd;
     RingBuffer* _write_queue;
