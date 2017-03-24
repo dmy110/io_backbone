@@ -1,15 +1,19 @@
 #include "CmdQueue.h"
+#include <string.h>
+#include "log.h"
+
+using namespace Seamless;
 RingBuffer::RingBuffer(int buffer_size): _begin(0), _end(1), _buffer_size(buffer_size)
 {
-    _data = mmap(nullptr, buffer_size + sizeof(RingBuffer), 
-        PROT_READ|PROT_WRITE, MAP_SHARED|MAP_ANON, 0, 0);
+    // _data = (char*)mmap(nullptr, buffer_size + sizeof(RingBuffer), 
+    //     PROT_READ|PROT_WRITE, MAP_SHARED|MAP_ANON, 0, 0);
 }
 RingBuffer::~RingBuffer() 
 {
-    munmap(_data, buffer_size);
+    // munmap(_data, _buffer_size);
 }
 
-size_t RingBuffer::read(void* buffer, void len)
+size_t RingBuffer::read(char* buffer, size_t len)
 {
     //get end first
     size_t end = this->_end;
@@ -64,7 +68,7 @@ size_t RingBuffer::read(void* buffer, void len)
     return data_len;
 }
 
-size_t RingBuffer::write(const void* data, size_t len)
+size_t RingBuffer::write(const char* data, size_t len)
 {
     //get begin first
     size_t begin = this->_begin;
@@ -119,7 +123,7 @@ size_t RingBuffer::write(const void* data, size_t len)
     return data_len;
 }
 
-bool RingBuffer::atomic_read(void* buffer, size_t len)
+bool RingBuffer::atomic_read(char* buffer, size_t len)
 {
         //get end first
     size_t end = this->_end;
@@ -174,7 +178,7 @@ bool RingBuffer::atomic_read(void* buffer, size_t len)
     return true;
 }
 
-bool RingBuffer::atomic_write(const void* data, size_t len)
+bool RingBuffer::atomic_write(const char* data, size_t len)
 {
     //get begin first
     size_t begin = this->_begin;
@@ -229,20 +233,23 @@ bool RingBuffer::atomic_write(const void* data, size_t len)
     return true;
 }
 
-CmdQueue::CmdQueue(uint32_t buffer_size):_ring_buffer_1(buffer_size),
-    _ring_buffer_2(buffer_size), _buffer_size(buffer_size)
+CmdQueue::CmdQueue(uint32_t buffer_size):_buffer_size(buffer_size)
 {
-    _read_buffer = malloc(buffer_size);
+    _read_buffer = (char*)malloc(buffer_size);
+    _ring_buffer_1 = (RingBuffer*)mmap(nullptr, buffer_size + sizeof(RingBuffer), 
+         PROT_READ|PROT_WRITE, MAP_SHARED|MAP_ANON, 0, 0);
+    _ring_buffer_2 = (RingBuffer*)mmap(nullptr, buffer_size + sizeof(RingBuffer), 
+         PROT_READ|PROT_WRITE, MAP_SHARED|MAP_ANON, 0, 0);
 }
 
-void CmdQueue::init(bool is_child_process, std::function<void(const transform_cmd_t*)> process_cmd_func);
+void CmdQueue::init(bool is_child_process, std::function<void(const transform_cmd_t*)> process_cmd_func)
 {
     if (is_child_process) {
-        _read_queue = &_ring_buffer_1;
-        _write_queue = &_ring_buffer_2;
+        _read_queue = _ring_buffer_1;
+        _write_queue = _ring_buffer_2;
     } else {
-        _read_queue = &_ring_buffer_2;
-        _write_queue = &_ring_buffer_1;
+        _read_queue = _ring_buffer_2;
+        _write_queue = _ring_buffer_1;
     }
     _process_cmd_func = process_cmd_func;
 }
@@ -254,16 +261,14 @@ void CmdQueue::put_cmd(transform_cmd_t* cmd)
         //如果大于队列最大的大小，打个日志
         log(LOG_LVL_WARNING, "big packet, size:%d", cmd->cmd_size);
         //拆包
-        
-        //原来的包释放掉
-        free(cmd);
+        transform_cmd_joint_t::split(cmd, _send_cmd, _buffer_size);
     } else {
         _send_cmd.push_back(cmd);
     }
 
-    while(_send_cmd.front()) {
+    while(!_send_cmd.empty()) {
         transform_cmd_t* cmd_to_send = _send_cmd.front();
-        if (_write_buffer->atomic_write(cmd_to_send, cmd_to_send->cmd_size) == false) {
+        if (_write_queue->atomic_write((char*)cmd_to_send, cmd_to_send->cmd_size) == false) {
             //如果无法写入，说明要么包过大，要么对端进程忙不过了，打个日志
             log(LOG_LVL_TRACE, "write_buffer is full,next packet size : %d", cmd->cmd_size);
             break;
@@ -275,7 +280,7 @@ void CmdQueue::put_cmd(transform_cmd_t* cmd)
 
 void CmdQueue::process_cmd()
 {
-    size_t read_size = _read_queue->read(_read_buffer, buffer_size);
+    size_t read_size = _read_queue->read(_read_buffer, _buffer_size);
     if (read_size == 0) return;
 
     size_t cmd_begin_idx = 0;
@@ -288,7 +293,21 @@ void CmdQueue::process_cmd()
         }
 
         transform_cmd_t* cmd = (transform_cmd_t*)(_read_buffer + cmd_begin_idx);
-        
+        cmd_begin_idx += cmd->cmd_size;
+        if (cmd->cmd_type != TRANSFORM_CMD_JOINT && cmd->cmd_type != TRANSFORM_CMD_JOINT_END) {
+            _process_cmd_func(cmd);
+            continue;
+        } else {
+            transform_cmd_joint_t* split_cmd = (transform_cmd_joint_t*)malloc(cmd->cmd_size);
+            memcpy(split_cmd, cmd, cmd->cmd_size);
+            _read_cmd.push_back(split_cmd);
+            if (cmd->cmd_type == TRANSFORM_CMD_JOINT_END) {
+                transform_cmd_t* joint_cmd;
+                transform_cmd_joint_t::joint(&joint_cmd, _read_cmd);
+                _process_cmd_func(joint_cmd);
+                free(joint_cmd);
+            }
+        }
     }
 
     // if (_read_cmd.size()) {
@@ -296,7 +315,7 @@ void CmdQueue::process_cmd()
     // }
 }
 
-void transform_cmd_joint_t::split(const transform_cmd_t* cmd, std::list<transform_cmd_joint_t*>& cmd_list, size_t max_buffer_size)
+void transform_cmd_joint_t::split(transform_cmd_t* cmd, std::list<transform_cmd_t*>& cmd_list, size_t max_buffer_size)
 {
     size_t cmd_size = cmd->cmd_size;
     size_t split_size = 0;
@@ -323,7 +342,7 @@ void transform_cmd_joint_t::joint(transform_cmd_t** cmd, std::list<transform_cmd
     for (auto& it : cmd_list) {
         total_packet_len += it->cmd_size - sizeof(transform_cmd_joint_t);
     }
-    (transform_cmd_t*)cmd_ptr = malloc(total_packet_len);
+    transform_cmd_t* cmd_ptr = (transform_cmd_t*)malloc(total_packet_len);
     *cmd = cmd_ptr;
     
     size_t append_packet_len = 0;
@@ -335,4 +354,43 @@ void transform_cmd_joint_t::joint(transform_cmd_t** cmd, std::list<transform_cmd
     }
 
     cmd_list.clear();
+}
+
+transform_cmd_test_t* transform_cmd_test_t::generate_cmd(const char* msg)
+{
+    size_t cmd_size = sizeof(transform_cmd_test_t) + strlen(msg);
+    transform_cmd_test_t* ret = (transform_cmd_test_t*)malloc(cmd_size);
+    ret->cmd_type = TRANSFORM_CMD_TEST;
+    ret->cmd_size = cmd_size;
+    memcpy(ret->test_msg, msg, strlen(msg));
+    return ret;
+}
+
+#include <unistd.h>
+int main()
+{
+    CmdQueue cq(1024);
+    int pid = fork();
+    if (pid) {
+        cq.init(false, [](const transform_cmd_t* cmd){
+            //do nothing
+        });
+        while (true) {
+            auto cmd = transform_cmd_test_t::generate_cmd("呵呵思密达");
+            cq.put_cmd(cmd);
+            sleep(1);
+        }
+    } else {
+        cq.init(true, [](const transform_cmd_t* cmd){
+            if (cmd->cmd_type == TRANSFORM_CMD_TEST) {
+                std::string s(((transform_cmd_test_t*)cmd)->test_msg, cmd->cmd_size - sizeof(transform_cmd_test_t));
+                log(s.c_str());
+            }
+        });
+        while (true) {
+            cq.process_cmd();
+            sleep(1);
+        }
+    }
+
 }

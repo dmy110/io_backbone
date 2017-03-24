@@ -32,6 +32,7 @@ enum LOG_LVL
     LOG_LVL_DEBUG = 1,
     LOG_LVL_TRACE = 2,
     LOG_LVL_WARNING = 3,
+    LOG_LVL_ERROR = 4,
 };
 //直接调用LogUtils的对应函数，这里只是方便调用
 void log(char const* log_str, ...);
