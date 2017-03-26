@@ -1,3 +1,5 @@
+#ifndef _SEAMLESS_LOG_
+#define _SEAMLESS_LOG_
 #include <cstdarg>
 #include <functional>
 namespace Seamless
@@ -40,3 +42,4 @@ void log(int log_lvl, const char* log_str, ...);
 
 
 };
+#endif

@@ -1,9 +1,9 @@
 #include "CmdQueue.h"
 #include <string.h>
 #include "log.h"
-
+#include <unistd.h>
 using namespace Seamless;
-RingBuffer::RingBuffer(int buffer_size): _begin(0), _end(1), _buffer_size(buffer_size)
+RingBuffer::RingBuffer()
 {
     // _data = (char*)mmap(nullptr, buffer_size + sizeof(RingBuffer), 
     //     PROT_READ|PROT_WRITE, MAP_SHARED|MAP_ANON, 0, 0);
@@ -11,6 +11,13 @@ RingBuffer::RingBuffer(int buffer_size): _begin(0), _end(1), _buffer_size(buffer
 RingBuffer::~RingBuffer() 
 {
     // munmap(_data, _buffer_size);
+}
+
+void RingBuffer::init(int buffer_size)
+{
+    _buffer_size = buffer_size + 2;
+    _begin = 0;
+    _end = 1;
 }
 
 size_t RingBuffer::read(char* buffer, size_t len)
@@ -134,7 +141,8 @@ bool RingBuffer::atomic_read(char* buffer, size_t len)
     if (end > begin) {
         size_t foo = end - begin - 1;
         if (foo < len) {
-            data_len = foo;
+            return false;
+            // data_len = foo;
         } else {
             data_len = len;
         }
@@ -147,7 +155,8 @@ bool RingBuffer::atomic_read(char* buffer, size_t len)
     } else {
         size_t foo = _buffer_size - (begin - end + 1);
         if (foo < len) {
-            data_len = foo;
+            // data_len = foo;
+            return false;
         } else {
             data_len = len;
         }
@@ -189,7 +198,8 @@ bool RingBuffer::atomic_write(const char* data, size_t len)
     if (begin > end) {
         size_t foo = begin - end - 1;
         if (foo < len) {
-            data_len = foo;
+            return false;
+            // data_len = foo;
         } else {
             data_len = len;
         }
@@ -203,7 +213,8 @@ bool RingBuffer::atomic_write(const char* data, size_t len)
     } else {
         size_t foo = _buffer_size - (end - begin + 1);
         if (foo < len) {
-            data_len = foo;
+            return false;
+            // data_len = foo;
         } else {
             data_len = len;
         }
@@ -233,13 +244,16 @@ bool RingBuffer::atomic_write(const char* data, size_t len)
     return true;
 }
 
-CmdQueue::CmdQueue(uint32_t buffer_size):_buffer_size(buffer_size)
+CmdQueue::CmdQueue(uint32_t buffer_size)
 {
-    _read_buffer = (char*)malloc(buffer_size);
-    _ring_buffer_1 = (RingBuffer*)mmap(nullptr, buffer_size + sizeof(RingBuffer), 
+    _buffer_size = buffer_size + sizeof(transform_cmd_t);
+    _read_buffer = (char*)malloc(_buffer_size);
+    _ring_buffer_1 = (RingBuffer*)mmap(nullptr, _buffer_size + sizeof(RingBuffer), 
          PROT_READ|PROT_WRITE, MAP_SHARED|MAP_ANON, 0, 0);
-    _ring_buffer_2 = (RingBuffer*)mmap(nullptr, buffer_size + sizeof(RingBuffer), 
+    _ring_buffer_2 = (RingBuffer*)mmap(nullptr, _buffer_size + sizeof(RingBuffer), 
          PROT_READ|PROT_WRITE, MAP_SHARED|MAP_ANON, 0, 0);
+    _ring_buffer_1->init(_buffer_size);
+    _ring_buffer_2->init(_buffer_size);
 }
 
 void CmdQueue::init(bool is_child_process, std::function<void(const transform_cmd_t*)> process_cmd_func)
@@ -261,7 +275,8 @@ void CmdQueue::put_cmd(transform_cmd_t* cmd)
         //如果大于队列最大的大小，打个日志
         log(LOG_LVL_WARNING, "big packet, size:%d", cmd->cmd_size);
         //拆包
-        transform_cmd_joint_t::split(cmd, _send_cmd, _buffer_size);
+        // transform_cmd_joint_t::split(cmd, _send_cmd, _buffer_size);
+        return;
     } else {
         _send_cmd.push_back(cmd);
     }
@@ -286,8 +301,7 @@ void CmdQueue::process_cmd()
     size_t cmd_begin_idx = 0;
     while (cmd_begin_idx < read_size) {
         if (read_size - cmd_begin_idx < sizeof(transform_cmd_t)) {
-            //不应该出现这种情况
-            //丢弃这些数据
+            //数据缓存起来，下次使用
             log(LOG_LVL_ERROR, "error data, %d", read_size);
             break;
         }
@@ -298,6 +312,7 @@ void CmdQueue::process_cmd()
             _process_cmd_func(cmd);
             continue;
         } else {
+            return;
             transform_cmd_joint_t* split_cmd = (transform_cmd_joint_t*)malloc(cmd->cmd_size);
             memcpy(split_cmd, cmd, cmd->cmd_size);
             _read_cmd.push_back(split_cmd);
@@ -323,7 +338,7 @@ void transform_cmd_joint_t::split(transform_cmd_t* cmd, std::list<transform_cmd_
     while (split_size < cmd_size) {
         size_t total_packet_size = cmd_size < _max_buffer_size ? cmd_size : _max_buffer_size;
         transform_cmd_joint_t* joint_cmd = (transform_cmd_joint_t*)malloc(total_packet_size);
-        joint_cmd->cmd_size = total_packet_size;
+        joint_cmd->cmd_size = total_packet_size + sizeof(transform_cmd_t);
         memcpy(joint_cmd->data, cmd + split_size, total_packet_size);
         split_size += total_packet_size;
         if (split_size < cmd_size) {        
@@ -369,6 +384,10 @@ transform_cmd_test_t* transform_cmd_test_t::generate_cmd(const char* msg)
 #include <unistd.h>
 int main()
 {
+    LogUtils::init();
+    // LogUtils::set_log_handler([](int log_lvl, const char* msg){
+
+    // });
     CmdQueue cq(1024);
     int pid = fork();
     if (pid) {
@@ -389,7 +408,7 @@ int main()
         });
         while (true) {
             cq.process_cmd();
-            sleep(1);
+            usleep(1000);
         }
     }
 

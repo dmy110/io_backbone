@@ -1,3 +1,5 @@
+#ifndef _SEAMLESS_CMD_QUEUE_
+#define _SEAMLESS_CMD_QUEUE_
 #include <sys/types.h>
 #include <stdint.h>
 #include <list>
@@ -44,7 +46,7 @@ struct transform_cmd_test_t : transform_cmd_t
 class RingBuffer
 {
 public:
-    RingBuffer(int buffer_size);
+    RingBuffer();
     ~RingBuffer() ;
 
     bool atomic_read(char* buffer, size_t len);
@@ -52,6 +54,8 @@ public:
 // protected:
     size_t read(char* buffer, size_t len);
     size_t write(const char* data, size_t len);
+
+    void init(int buffer_size);
 private:
     volatile size_t _begin;
     volatile size_t _end;
@@ -73,6 +77,7 @@ private:
     RingBuffer* _ring_buffer_1;
     RingBuffer* _ring_buffer_2;
     size_t _buffer_size;
+
 private:
     RingBuffer* _read_queue;
     std::function<void(const transform_cmd_t*)> _process_cmd_func;
@@ -84,3 +89,4 @@ private:
 };
 
 }
+#endif

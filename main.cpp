@@ -142,10 +142,9 @@ int get_server_socket(const std::string& addr, int port)
 void parent()
 {
     LogUtils::init();
-    log("test if log is ok:%s", "parent");
-    void* pipe_discard_buffer = malloc(1024);
-    void* read_buffer = malloc(MAX_QUEUE_SIZE * 2);
-    void* write_buffer = malloc(MAX_QUEUE_SIZE * 2);
+    // void* pipe_discard_buffer = malloc(1024);
+    // void* read_buffer = malloc(MAX_QUEUE_SIZE * 2);
+    // void* write_buffer = malloc(MAX_QUEUE_SIZE * 2);
 
     int server_fd = get_server_socket("127.0.0.1", 8890);
 
